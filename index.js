@@ -19,9 +19,7 @@ const RADIO = 'https://icecast.unitedradio.it/R105';
 client.once('ready', async()=>{
   console.log('READY', client.user.tag);
   const cmds = [
-    new SlashCommandBuilder().setName('radio').setDescription('Accendi Radio 105'),
-    new SlashCommandBuilder().setName('party').setDescription('Accendi Radio 105'),
-    new SlashCommandBuilder().setName('stop').setDescription('Spegni radio')
+    new SlashCommandBuilder().setName('party').setDescription('Metti Radio 105 nel tuo vocale')
   ].map(c=>c.toJSON());
   const rest = new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);
   await rest.put(Routes.applicationCommands(client.user.id), {body:cmds});
@@ -31,7 +29,7 @@ client.once('ready', async()=>{
 client.on('interactionCreate', async i=>{
   if(!i.isChatInputCommand()) return;
   try{
-    if(i.commandName==='radio' || i.commandName==='party'){
+    if(i.commandName==='party'){
       await i.deferReply().catch(()=>{});
       const vc = i.member?.voice?.channel;
       if(!vc) return i.editReply('Entra prima in un vocale!').catch(()=>{});
@@ -46,11 +44,7 @@ client.on('interactionCreate', async i=>{
       connection.subscribe(player);
       await i.editReply(`▶️ Radio 105 in ${vc} 📻`).catch(()=>{});
     }
-    if(i.commandName==='stop'){
-      await i.deferReply().catch(()=>{});
-      if(connection){ try{connection.destroy()}catch{}; connection=null; }
-      await i.editReply('spenta!').catch(()=>{});
-    }
+
   }catch(err){
     console.error('ERR', err);
     const msg = err.message.includes('aborted') ? 'Connessione abortita da Discord - riprova tra 3 sec con /party' : 'Errore: '+err.message;
@@ -61,4 +55,3 @@ client.on('interactionCreate', async i=>{
 
 process.on('unhandledRejection', e=>console.error('unhandled', e));
 client.login(process.env.DISCORD_TOKEN);
-
