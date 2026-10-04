@@ -1,105 +1,64 @@
 const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const express = require('express');
-const https = require('https');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const http = require('http');
 const ffmpeg = require('ffmpeg-static');
 process.env.FFMPEG_PATH = ffmpeg;
-console.log('ffmpeg path:', ffmpeg);
 
-// web server per render
-const app = express();
-app.get('/', (req, res) => res.send('radio live ok'));
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`web server on ${PORT}`));
+// web server leggerissimo per Render (no express)
+http.createServer((req,res)=>{ res.writeHead(200); res.end('Radio 105 OK'); }).listen(process.env.PORT||10000, ()=>console.log('web ok'));
 
-const RADIO_URLS = [
-  'https://icecast.unitedradio.it/Radio105.mp3',
-  'https://icy.unitedradio.it/Radio105.mp3',
-  'http://icecast.unitedradio.it/Radio105.mp3'
-];
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
-});
-
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 let connection = null;
 let player = createAudioPlayer();
-player.on(AudioPlayerStatus.Playing, () => console.log('radio 105 in play'));
-player.on(AudioPlayerStatus.Idle, () => console.log('player idle'));
-player.on('error', e => console.error('player error:', e.message));
+player.on(AudioPlayerStatus.Playing, ()=>console.log('PLAYING'));
+player.on(AudioPlayerStatus.Idle, ()=>console.log('IDLE'));
+player.on('error', e=>console.error('player err', e.message));
 
-async function createRadioResource() {
-  for (const url of RADIO_URLS) {
-    try {
-      console.log('provo url', url);
-      const res = createAudioResource(url, { inputType: StreamType.Arbitrary, inlineVolume: false });
-      console.log('resource ok per', url);
-      return res;
-    } catch (e) {
-      console.error('fallito', url, e.message);
-    }
-  }
-  throw new Error('nessun URL radio funziona su Render');
-}
+const RADIO = 'https://icecast.unitedradio.it/R105';
 
-client.once('ready', async () => {
-  console.log(`ready ${client.user.tag}`);
-  const commands = [
-    new SlashCommandBuilder().setName('radio').setDescription('accendi radio 105 nel tuo vocale'),
-    new SlashCommandBuilder().setName('party').setDescription('accendi radio 105 nel tuo vocale'),
-    new SlashCommandBuilder().setName('stop').setDescription('spegni la radio')
-  ].map(c => c.toJSON());
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log('comandi globali ok');
-  } catch (e) { console.error('errore comandi', e); }
+client.once('ready', async()=>{
+  console.log('READY', client.user.tag);
+  const cmds = [
+    new SlashCommandBuilder().setName('radio').setDescription('Accendi Radio 105'),
+    new SlashCommandBuilder().setName('party').setDescription('Accendi Radio 105'),
+    new SlashCommandBuilder().setName('stop').setDescription('Spegni radio')
+  ].map(c=>c.toJSON());
+  const rest = new REST({version:'10'}).setToken(process.env.DISCORD_TOKEN);
+  await rest.put(Routes.applicationCommands(client.user.id), {body:cmds});
+  console.log('comandi ok');
 });
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  try {
-    if (interaction.commandName === 'radio' || interaction.commandName === 'party') {
-      // FIX: defer immediato per non far scadere l'interazione
-      await interaction.deferReply({ ephemeral: false }).catch(()=>{});
-      const vc = interaction.member?.voice?.channel;
-      if (!vc) {
-        return await interaction.editReply('entra prima in un vocale!').catch(()=>{});
-      }
-      if (connection) { try { connection.destroy(); } catch {} }
-      connection = joinVoiceChannel({
-        channelId: vc.id,
-        guildId: vc.guild.id,
-        adapterCreator: vc.guild.voiceAdapterCreator,
-        selfDeaf: false,
-        selfMute: false
-      });
-      await entersState(connection, VoiceConnectionStatus.Ready, 30000);
-      console.log('connesso a', vc.name);
-      const resource = await createRadioResource();
-      resource.playStream.on('error', e => console.error('stream error', e));
+client.on('interactionCreate', async i=>{
+  if(!i.isChatInputCommand()) return;
+  try{
+    if(i.commandName==='radio' || i.commandName==='party'){
+      await i.deferReply().catch(()=>{});
+      const vc = i.member?.voice?.channel;
+      if(!vc) return i.editReply('Entra prima in un vocale!').catch(()=>{});
+      if(connection) { try{connection.destroy()}catch{}; connection=null; }
+      await new Promise(r=>setTimeout(r,300));
+      connection = joinVoiceChannel({ channelId: vc.id, guildId: i.guild.id, adapterCreator: i.guild.voiceAdapterCreator, selfDeaf:false });
+      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+      console.log('connesso', vc.name, 'provo', RADIO);
+      const resource = createAudioResource(RADIO, { inputType: 'arbitrary', inlineVolume:false });
+      resource.playStream.on('error', e=>console.error('stream err', e.message));
       player.play(resource);
       connection.subscribe(player);
-      await interaction.editReply(`▶️ radio 105 in play in ${vc} 📻`).catch(()=>{});
+      await i.editReply(`▶️ Radio 105 in ${vc} 📻`).catch(()=>{});
     }
-
-    if (interaction.commandName === 'stop') {
-      await interaction.deferReply().catch(()=>{});
-      if (connection) { try { connection.destroy(); } catch {} connection = null; await interaction.editReply('radio spenta!').catch(()=>{}); }
-      else await interaction.editReply('non sono in vocale').catch(()=>{});
+    if(i.commandName==='stop'){
+      await i.deferReply().catch(()=>{});
+      if(connection){ try{connection.destroy()}catch{}; connection=null; }
+      await i.editReply('spenta!').catch(()=>{});
     }
-  } catch (err) {
-    console.error('errore interaction:', err);
-    // tenta sempre di rispondere per evitare "applicazione non ha risposto"
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('errore: ' + err.message).catch(()=>{});
-    } else {
-      await interaction.reply({ content: 'errore: ' + err.message, ephemeral: true }).catch(()=>{});
-    }
+  }catch(err){
+    console.error('ERR', err);
+    const msg = err.message.includes('aborted') ? 'Connessione abortita da Discord - riprova tra 3 sec con /party' : 'Errore: '+err.message;
+    if(i.deferred||i.replied) await i.editReply(msg).catch(()=>{});
+    else await i.reply({content:msg, ephemeral:true}).catch(()=>{});
   }
 });
 
-process.on('unhandledRejection', e => console.error('unhandled', e));
-process.on('uncaughtException', e => console.error('uncaught', e));
-
+process.on('unhandledRejection', e=>console.error('unhandled', e));
 client.login(process.env.DISCORD_TOKEN);
+
