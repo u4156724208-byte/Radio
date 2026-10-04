@@ -24,16 +24,12 @@ player.on(AudioPlayerStatus.Playing, () => console.log('radio 105 in play'));
 player.on(AudioPlayerStatus.Idle, () => console.log('player idle'));
 player.on('error', e => console.error('player error:', e.message));
 
-function getStreamWithTimeout(timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout stream radio 105')), timeoutMs);
-    const req = https.get(RADIO_URL, res => {
-      clearTimeout(timer);
-      if (res.statusCode !== 200) return reject(new Error('status ' + res.statusCode));
-      console.log('stream connesso', res.statusCode);
-      resolve(res);
-    });
-    req.on('error', err => { clearTimeout(timer); reject(err); });
+async function createRadioResource() {
+  // Lascia ffmpeg scaricare lo stream direttamente, molto più stabile su Render
+  // Prova prima con URL diretto
+  return createAudioResource(RADIO_URL, {
+    inputType: StreamType.Arbitrary,
+    inlineVolume: false
   });
 }
 
@@ -69,10 +65,9 @@ client.on('interactionCreate', async interaction => {
         selfDeaf: false,
         selfMute: false
       });
-      await entersState(connection, VoiceConnectionStatus.Ready, 15000);
+      await entersState(connection, VoiceConnectionStatus.Ready, 30000);
       console.log('connesso a', vc.name);
-      const stream = await getStreamWithTimeout(6000);
-      const resource = createAudioResource(stream, { inputType: StreamType.Arbitrary, inlineVolume: false });
+      const resource = await createRadioResource();
       resource.playStream.on('error', e => console.error('stream error', e));
       player.play(resource);
       connection.subscribe(player);
