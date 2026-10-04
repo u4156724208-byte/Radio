@@ -1,85 +1,14 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const express = require('express');
-const https = require('https');
-const ffmpeg = require('ffmpeg-static');
-
-console.log('FFMPEG PATH:', ffmpeg);
-
-const app = express();
-app.get('/', (req, res) => res.send('Radio Bot Live - Radio 105 OK'));
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Web server on ${PORT}`));
-
-const RADIO_105_URL = 'https://icy.unitedradio.it/Radio105.mp3';
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages]
-});
-
-let connection = null;
-let player = createAudioPlayer();
-
-player.on(AudioPlayerStatus.Playing, () => {
-  console.log('▶️ Radio 105 in play - AUDIO STA PARTENDO');
-});
-player.on('error', err => console.error('Errore Player:', err.message));
-
-function getRadioStream() {
-  return new Promise((resolve, reject) => {
-    const req = https.get(RADIO_105_URL, res => {
-      if (res.statusCode !== 200) return reject(new Error(`Status ${res.statusCode}`));
-      console.log('Stream Radio 105 connesso');
-      resolve(res);
-    });
-    req.on('error', reject);
-  });
+{
+  "name": "radio-bot-fix",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "@discordjs/opus": "^0.9.0",
+    "@discordjs/voice": "^0.16.1",
+    "discord.js": "^14.22.1",
+    "express": "^4.18.2",
+    "ffmpeg-static": "^5.2.0",
+    "libsodium-wrappers": "^0.7.15"
+  }
 }
-
-client.once('ready', async () => {
-  console.log(`✅ READY ${client.user.tag}`);
-  const commands = [
-    new SlashCommandBuilder().setName('radio').setDescription('Accendi Radio 105 nel tuo vocale'),
-    new SlashCommandBuilder().setName('stop').setDescription('Spegni la radio')
-  ].map(c => c.toJSON());
-
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-  console.log('Comandi globali ok');
-});
-
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.commandName === 'radio') {
-    const voiceChannel = interaction.member?.voice?.channel;
-    if (!voiceChannel) return interaction.reply({ content: '❌ Entra prima in un vocale!', ephemeral: true });
-    await interaction.deferReply();
-    try {
-      if (connection) { try { connection.destroy(); } catch {} }
-      connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: interaction.guild.id,
-        adapterCreator: interaction.guild.voiceAdapterCreator,
-        selfDeaf: false
-      });
-      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-      const stream = await getRadioStream();
-      const resource = createAudioResource(stream, { inputType: StreamType.Arbitrary });
-      player.play(resource);
-      connection.subscribe(player);
-      await interaction.editReply(`▶️ **Radio 105 in play** in ${voiceChannel} 📻`);
-    } catch (err) {
-      console.error(err);
-      await interaction.editReply(`❌ Errore: ${err.message}`);
-    }
-  }
-
-  if (interaction.commandName === 'stop') {
-    await interaction.deferReply();
-    if (connection) { connection.destroy(); connection = null; }
-    await interaction.editReply('⏹️ Radio spenta!');
-  }
-});
-
-client.login(process.env.DISCORD_TOKEN);
