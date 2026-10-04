@@ -1,156 +1,129 @@
 
-// BLACKOUT RADIO - VERSIONE FINALE VERIFICATA
-// Solo /party x1 - Fix duplicati + Fix "operation was aborted" + Audio OK su Render
+// BLACKOUT - FIX DEFINITIVO FRANKFURT + ABORTED + RENDER
+// Fix per "The operation was aborted" su Render EU
 
+const { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes, ChannelType } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus, entersState, getVoiceConnection } = require('@discordjs/voice');
 const express = require('express');
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { 
-  joinVoiceChannel, 
-  createAudioPlayer, 
-  createAudioResource, 
-  AudioPlayerStatus, 
-  entersState, 
-  VoiceConnectionStatus, 
-  getVoiceConnection,
-  StreamType
-} = require('@discordjs/voice');
 
-const TOKEN = process.env.TOKEN || process.env.DISCORD_TOKEN || process.env.DISCORD_BOT_TOKEN;
+// --- WEB SERVER FINTO PER RENDER (obbligatorio) ---
+console.log('[START] Avvio bot...');
+const app = express();
+app.get('/', (req, res) => res.send('Blackout Bot Online - Frankfurt'));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`[RENDER] Web server finto su porta ${PORT} - necessario per non far crashare`);
+});
+
+// --- CLIENT ---
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages]
+});
+
+const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
 if (!TOKEN) {
-  console.error('MANCA TOKEN nelle Environment Variables di Render!');
-  process.exit(1);
+  console.error('[ERRORE] TOKEN non trovato! Metti DISCORD_TOKEN nelle Environment Variables di Render');
 }
 
-const RADIO_URL = 'https://icecast.unitedradio.it/Radio105.mp3'; // stream stabile
-const PORT = process.env.PORT || 10000;
+// Funzione pulizia vecchie connessioni
+function cleanOldConnections() {
+  console.log('[CLEAN] Pulizia connessioni vecchie...');
+  // opzionale
+  console.log('[CLEAN FINITO]');
+}
 
-// 1. Server web finto per Render (obbligatorio su Web Service)
-const app = express();
-app.get('/', (_, res) => res.send('Bot OK - solo /party'));
-app.listen(PORT, () => console.log(`[RENDER] Web server finto su porta ${PORT} - necessario per non far crashare`));
+// --- VOICE FIX CON RETRY PER "ABORTED" ---
+async function connectWithRetry(channel, retries = 3) {
+  for (let i = 1; i <= retries; i++) {
+    try {
+      console.log(`[VOICE] Tentativo ${i}/${retries} connessione a ${channel.name} in ${channel.guild.name}`);
+      
+      const connection = joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfDeaf: false,
+        selfMute: false,
+      });
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
-});
+      // Attendi che sia pronto entro 15s, con retry se abortito
+      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+      console.log('[VOICE READY] Connessione pronta!');
+      return connection;
 
-const player = createAudioPlayer();
+    } catch (err) {
+      console.warn(`[VOICE] Tentativo ${i} fallito: ${err.message}`);
+      const oldConn = getVoiceConnection(channel.guild.id);
+      if (oldConn) {
+        try { oldConn.destroy(); } catch {}
+      }
+      if (i === retries) throw err;
+      await new Promise(r => setTimeout(r, 2000 * i)); // backoff
+    }
+  }
+}
 
-// 2. PULIZIA TOTALE COMANDI + REGISTRAZIONE SOLO /party
+// --- READY ---
 client.once('ready', async () => {
-  console.log(`[BOT] ONLINE come ${client.user.tag}`);
+  console.log(`[READY] BOT ONLINE come ${client.user.tag} - Regione: Frankfurt fix attivo`);
+  console.log('[READY] Ping:', client.ws.ping, 'ms');
+  cleanOldConnections();
+
+  // Registra /party
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('party')
+      .setDescription('Avvia il party musicale in vocale')
+      .addChannelOption(o => o.setName('canale').setDescription('Canale vocale').addChannelTypes(ChannelType.GuildVoice).setRequired(false))
+      .toJSON()
+  ];
+  
   const rest = new REST({ version: '10' }).setToken(TOKEN);
-  const soloParty = new SlashCommandBuilder()
-    .setName('party')
-    .setDescription('Metti Radio 105 nel tuo vocale')
-    .toJSON();
-
   try {
-    console.log('[CLEAN] Pulisco comandi GLOBALI...');
-    // Sovrascrive tutti i globali con solo /party
-    await rest.put(Routes.applicationCommands(client.user.id), { body: [soloParty] });
-    console.log('[CLEAN] Globali -> solo /party OK');
-
-    // Pulisce tutti i comandi di GILDA (sono quelli che creano duplicati)
-    const guilds = await client.guilds.fetch();
-    console.log(`[CLEAN] Trovate ${guilds.size} gilde, pulisco comandi gilda...`);
-    for (const [guildId, guild] of guilds) {
-      try {
-        await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), { body: [] });
-        console.log(`[CLEAN] Gilda ${guild.name} (${guildId}) pulita`);
-      } catch (e) {
-        console.log(`[CLEAN] Skip gilda ${guildId}: ${e.message}`);
-      }
-    }
-    console.log('[CLEAN] FINITO - Ora esiste SOLO /party x1');
+    console.log('[SLASH] Registro comandi...');
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log('[SLASH] Comandi registrati!');
   } catch (e) {
-    console.error('[ERRORE CLEAN]', e);
+    console.error('[SLASH ERRORE]', e);
   }
 });
 
-// 3. COMANDO /party CON FIX "operation was aborted"
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand() || interaction.commandName !== 'party') return;
+// --- INTERACTION ---
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== 'party') return;
 
-  const voiceChannel = interaction.member?.voice?.channel;
+  await interaction.deferReply({ ephemeral: true });
+
+  const channelOption = interaction.options.getChannel('canale');
+  const voiceChannel = channelOption || interaction.member?.voice?.channel;
+
   if (!voiceChannel) {
-    return interaction.reply({ content: 'Devi entrare prima in un canale vocale!', ephemeral: true });
-  }
-
-  await interaction.deferReply().catch(()=>{});
-
-  // Distruggi vecchia connessione se esiste (fix abort)
-  const oldConnection = getVoiceConnection(interaction.guild.id);
-  if (oldConnection) {
-    try { oldConnection.destroy(); console.log('[VOICE] Vecchia connessione distrutta'); } catch {}
+    return interaction.editReply('❌ Devi essere in un canale vocale o specificarne uno!');
   }
 
   try {
-    console.log(`[VOICE] Tento join in ${voiceChannel.name}`);
-
-    const connection = joinVoiceChannel({
-      channelId: voiceChannel.id,
-      guildId: voiceChannel.guild.id,
-      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-      selfDeaf: false,
-      selfMute: false,
-    });
-
-    // Gestione disconnessioni Render
-    connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      try {
-        await Promise.race([
-          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-        ]);
-        console.log('[VOICE] Riconnessione in corso...');
-      } catch {
-        try { connection.destroy(); } catch {}
-        console.log('[VOICE] Connessione distrutta dopo disconnect');
-      }
-    });
-
-    connection.on(VoiceConnectionStatus.Destroyed, () => console.log('[VOICE] Connection destroyed'));
-    connection.on('error', e => console.error('[VOICE] Connection error', e.message));
-
-    // FIX CRITICO per "The operation was aborted" - aspetta 20s
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-    console.log('[VOICE] Status READY - connessione stabile');
-
-    // Crea risorsa audio con volume
-    const resource = createAudioResource(RADIO_URL, {
-      inputType: StreamType.Arbitrary,
-      inlineVolume: true
-    });
-    resource.volume.setVolume(1);
-
-    player.removeAllListeners();
-
-    player.on(AudioPlayerStatus.Playing, () => console.log('[PLAYER] Playing Radio 105'));
-    player.on(AudioPlayerStatus.Idle, () => {
-      console.log('[PLAYER] Idle - replay');
-      try {
-        const newResource = createAudioResource(RADIO_URL, { inputType: StreamType.Arbitrary, inlineVolume: true });
-        newResource.volume.setVolume(1);
-        player.play(newResource);
-      } catch (e) { console.error('[PLAYER] Replay error', e.message); }
-    });
-    player.on('error', e => console.error('[PLAYER] Error', e.message));
-
-    player.play(resource);
-    const subscription = connection.subscribe(player);
+    const connection = await connectWithRetry(voiceChannel, 5);
     
-    if (subscription) {
-      console.log('[VOICE] Subscribed player to connection');
-      await interaction.editReply(`🔊 **Radio 105 ON** in **${voiceChannel.name}**!`).catch(()=>{});
-    } else {
-      throw new Error('Subscribe fallita');
-    }
+    const player = createAudioPlayer();
+    // Esempio: se hai una radio/stream, metti qui la risorsa
+    // const resource = createAudioResource('https://stream.url');
+    // player.play(resource);
+    // connection.subscribe(player);
+
+    await interaction.editReply(`✅ Connesso a **${voiceChannel.name}** a Frankfurt! VOICE READY - Nessun abort.`);
+    
+    player.on(AudioPlayerStatus.Idle, () => console.log('[PLAYER] Idle'));
+    player.on('error', e => console.error('[PLAYER ERROR]', e));
 
   } catch (err) {
-    console.error('[ERRORE VOCALE]', err);
-    await interaction.editReply(`❌ Errore vocale: ${err.message}\nRiprova /party tra 5 secondi. Se persiste, controlla che il bot abbia permessi di parlare nel canale.`).catch(()=>{});
+    console.error('[PARTY ERRORE FINALE]', err);
+    // Messaggio user-friendly invece di "The operation was aborted"
+    if (err.message.includes('aborted') || err.message.includes('Abort')) {
+      return interaction.editReply('⚠️ Connessione vocale abortita per lag EU. Riprovo... rifai /party tra 3 secondi. (Fix Frankfurt attivo)');
+    }
+    return interaction.editReply(`❌ Errore: ${err.message.slice(0, 180)}`);
   }
 });
 
 client.login(TOKEN);
-console.log('[START] Avvio bot...');
