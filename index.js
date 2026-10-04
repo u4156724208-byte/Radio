@@ -3,7 +3,7 @@ const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerSta
 const express = require('express');
 const https = require('https');
 const ffmpeg = require('ffmpeg-static');
-
+process.env.FFMPEG_PATH = ffmpeg;
 console.log('ffmpeg path:', ffmpeg);
 
 // web server per render
@@ -12,7 +12,11 @@ app.get('/', (req, res) => res.send('radio live ok'));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`web server on ${PORT}`));
 
-const RADIO_URL = 'https://icy.unitedradio.it/Radio105.mp3';
+const RADIO_URLS = [
+  'https://icecast.unitedradio.it/Radio105.mp3',
+  'https://icy.unitedradio.it/Radio105.mp3',
+  'http://icecast.unitedradio.it/Radio105.mp3'
+];
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
@@ -25,12 +29,17 @@ player.on(AudioPlayerStatus.Idle, () => console.log('player idle'));
 player.on('error', e => console.error('player error:', e.message));
 
 async function createRadioResource() {
-  // Lascia ffmpeg scaricare lo stream direttamente, molto più stabile su Render
-  // Prova prima con URL diretto
-  return createAudioResource(RADIO_URL, {
-    inputType: StreamType.Arbitrary,
-    inlineVolume: false
-  });
+  for (const url of RADIO_URLS) {
+    try {
+      console.log('provo url', url);
+      const res = createAudioResource(url, { inputType: StreamType.Arbitrary, inlineVolume: false });
+      console.log('resource ok per', url);
+      return res;
+    } catch (e) {
+      console.error('fallito', url, e.message);
+    }
+  }
+  throw new Error('nessun URL radio funziona su Render');
 }
 
 client.once('ready', async () => {
